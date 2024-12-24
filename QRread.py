@@ -30,3 +30,5 @@ while True:
     cv.imshow("In", frame)
     if cv.waitKey(1) & 0xFF == ord("q"):
         break
+
+    # add to GUI
