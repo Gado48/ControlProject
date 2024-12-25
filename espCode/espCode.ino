@@ -3,8 +3,8 @@
 
 using namespace websockets;
 
-const char* ssid = "outside";
-const char* password = "##outside25";
+const char* ssid = "gado";
+const char* password = "00009999";
 
 WebsocketsServer server;
 
@@ -15,6 +15,20 @@ const int in4 = 6;
 
 const int enA = 25;
 const int enB = 26;
+
+const int encoderA = 22;
+const int encoderB = 23;
+
+volatile long counterA = 0;
+volatile long counterB = 0;
+
+void enLeft() {
+  counterA++;
+}
+
+void enRight() {
+  counterB++;
+}
 
 void forwardMotion() {
   digitalWrite(in1, HIGH);
@@ -71,6 +85,12 @@ void setup() {
   pinMode(enA, OUTPUT);
   pinMode(enB, OUTPUT);
 
+  pinMode(encoderA, INPUT_PULLUP);
+  pinMode(encoderB, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(encoderA), enLeft, RISING);
+  attachInterrupt(digitalPinToInterrupt(encoderB), enRight, RISING);
+
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -109,7 +129,7 @@ void loop() {
         leftMotion();
       } else if (command == "R") {
         rightMotion();
-      } else if (command == "STOP") {
+      } else if (command == "S") {
         stopMotion();
       } else {
         Serial.println("Unknown command");

@@ -19,29 +19,43 @@ width, height = 400, 400
 win = pygame.display.set_mode((width, height))
 pygame.display.set_caption("Robot Controller")
 
+# Variables to track key states
+current_command = None
+
 # Main loop
 run = True
 while run:
+    keys = pygame.key.get_pressed()  # Check the state of keys
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             run = False
 
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_w:
-                ws.send(json.dumps({"command": "F"}))
-                print("Forward")
-            elif event.key == pygame.K_s:
-                ws.send(json.dumps({"command": "B"}))
-                print("Backward")
-            elif event.key == pygame.K_a:
-                ws.send(json.dumps({"command": "L"}))
-                print("Left")
-            elif event.key == pygame.K_d:
-                ws.send(json.dumps({"command": "R"}))
-                print("Right")
-
-        if event.type == pygame.KEYUP:
-            ws.send(json.dumps({"command": "stop"}))
+    # Check key states and send commands
+    if keys[pygame.K_w]:
+        if current_command != "F":
+            ws.send(json.dumps({"command": "F"}))
+            print("Forward")
+            current_command = "F"
+    elif keys[pygame.K_s]:
+        if current_command != "B":
+            ws.send(json.dumps({"command": "B"}))
+            print("Backward")
+            current_command = "B"
+    elif keys[pygame.K_a]:
+        if current_command != "L":
+            ws.send(json.dumps({"command": "L"}))
+            print("Left")
+            current_command = "L"
+    elif keys[pygame.K_d]:
+        if current_command != "R":
+            ws.send(json.dumps({"command": "R"}))
+            print("Right")
+            current_command = "R"
+    else:
+        if current_command is not None:  # If no keys are pressed, stop
+            ws.send(json.dumps({"command": "S"}))
+            print("Stop")
+            current_command = None
 
     win.fill((0, 0, 0))
     pygame.display.update()
