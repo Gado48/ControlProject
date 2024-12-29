@@ -6,7 +6,7 @@ import time
 # Setup WebSocket connection
 try:
     ws = websocket.WebSocket()
-    ws.connect("ws://192.168.1.13:80")  # Replace with your ESP32 IP and port
+    ws.connect("ws://192.168.151.7:80")  # Replace with your ESP32 IP and port
 except Exception as e:
     print(f"Error connecting to WebSocket: {e}")
     exit()
@@ -21,6 +21,14 @@ pygame.display.set_caption("Robot Controller")
 
 # Variables to track key states
 current_command = None
+selected_servo = 1  # Start with the first servo
+
+
+# Function to send servo control commands
+def send_servo_command(servo, direction):
+    ws.send(json.dumps({"servo": servo, "direction": direction}))
+    print(f"Servo {servo} moved {direction}")
+
 
 # Main loop
 run = True
@@ -56,6 +64,25 @@ while run:
             ws.send(json.dumps({"command": "S"}))
             print("Stop")
             current_command = None
+
+    # Servo selection
+    if keys[pygame.K_1]:
+        selected_servo = 1
+        print("Controlling Servo 1")
+    elif keys[pygame.K_2]:
+        selected_servo = 2
+        print("Controlling Servo 2")
+    elif keys[pygame.K_3]:
+        selected_servo = 3
+        print("Controlling Servo 3")
+
+    # Servo angle adjustment
+    if keys[pygame.K_UP]:
+        send_servo_command(selected_servo, "up")
+        time.sleep(0.05)  # Small delay for smooth control
+    elif keys[pygame.K_DOWN]:
+        send_servo_command(selected_servo, "down")
+        time.sleep(0.05)
 
     win.fill((0, 0, 0))
     pygame.display.update()

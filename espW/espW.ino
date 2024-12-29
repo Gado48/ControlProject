@@ -13,10 +13,10 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 QueueHandle_t commandQueue;
 
 // Motor control pins (adjust these as needed)
-#define MOTOR_FORWARD_PIN 5
-#define MOTOR_BACKWARD_PIN 6
-#define MOTOR_LEFT_PIN 7
-#define MOTOR_RIGHT_PIN 8
+#define MOTOR_FORWARD_PIN 14
+#define MOTOR_BACKWARD_PIN 15
+#define MOTOR_LEFT_PIN 16
+#define MOTOR_RIGHT_PIN 17
 
 void setup() {
     Serial.begin(115200);

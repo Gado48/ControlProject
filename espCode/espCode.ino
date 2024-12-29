@@ -1,17 +1,18 @@
 #include <WiFi.h>
 #include <ArduinoWebsockets.h>
+#include <ESP32Servo.h>
 
 using namespace websockets;
 
-const char* ssid = "gado";
-const char* password = "00009999";
+const char* ssid = "ssid";
+const char* password = "password";
 
 WebsocketsServer server;
 
-const int in1 = 2;
-const int in2 = 3;
-const int in3 = 5;
-const int in4 = 6;
+const int in1 = 15;
+const int in2 = 16;
+const int in3 = 17;
+const int in4 = 18;
 
 const int enA = 25;
 const int enB = 26;
@@ -21,6 +22,15 @@ const int encoderB = 23;
 
 volatile long counterA = 0;
 volatile long counterB = 0;
+
+Servo shoulder;
+Servo elbow;
+Servo gripper;
+
+int shoulderAngle = 90; // Initial angle for Servo 1
+int elbowAngle = 90; // Initial angle for Servo 2
+int gripperAngle = 90; // Initial angle for Servo 3
+
 
 void enLeft() {
   counterA++;
@@ -35,8 +45,8 @@ void forwardMotion() {
   digitalWrite(in2, LOW);
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
-  analogWrite(enA, 255);  // Full speed
-  analogWrite(enB, 255);  // Full speed
+  analogWrite(enA, 255); //full speed
+  analogWrite(enB, 255); //full speed
 }
 
 void backwardMotion() {
@@ -44,8 +54,8 @@ void backwardMotion() {
   digitalWrite(in2, HIGH);
   digitalWrite(in3, LOW);
   digitalWrite(in4, HIGH);
-  analogWrite(enA, 255);  // Full speed
-  analogWrite(enB, 255);  // Full speed
+  analogWrite(enA, 255); //full speed
+  analogWrite(enB, 255); //full speed
 }
 
 void leftMotion() {
@@ -53,8 +63,8 @@ void leftMotion() {
   digitalWrite(in2, HIGH);
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
-  analogWrite(enA, 255);  // Full speed
-  analogWrite(enB, 255);  // Full speed
+  analogWrite(enA, 255); //full speed
+  analogWrite(enB, 255); //full speed
 }
 
 void rightMotion() {
@@ -62,8 +72,8 @@ void rightMotion() {
   digitalWrite(in2, LOW);
   digitalWrite(in3, LOW);
   digitalWrite(in4, HIGH);
-  analogWrite(enA, 255);  // Full speed
-  analogWrite(enB, 255);  // Full speed
+  analogWrite(enA, 255); //full speed
+  analogWrite(enB, 255); //full speed
 }
 
 void stopMotion() {
@@ -71,8 +81,8 @@ void stopMotion() {
   digitalWrite(in2, LOW);
   digitalWrite(in3, LOW);
   digitalWrite(in4, LOW);
-  analogWrite(enA, 0);  // Stop
-  analogWrite(enB, 0);  // Stop
+  analogWrite(enA, 0); 
+  analogWrite(enB, 0);
 }
 
 void setup() {
@@ -90,6 +100,22 @@ void setup() {
 
   attachInterrupt(digitalPinToInterrupt(encoderA), enLeft, RISING);
   attachInterrupt(digitalPinToInterrupt(encoderB), enRight, RISING);
+
+  // Initialize servos
+  ESP32PWM::allocateTimer(0);
+	ESP32PWM::allocateTimer(1);
+	ESP32PWM::allocateTimer(2);
+	ESP32PWM::allocateTimer(3);
+	shoulder.setPeriodHertz(50);    // standard 50 hz servo
+  elbow.setPeriodHertz(50);    // standard 50 hz servo
+  gripper.setPeriodHertz(50);    // standard 50 hz servo
+	shoulder.attach(20, 1000, 2000); // attaches the servo on pin 18 to the servo object
+  elbow.attach(21, 1000, 2000); // attaches the servo on pin 18 to the servo object
+  gripper.attach(22, 1000, 2000); // attaches the servo on pin 18 to the servo object
+
+  shoulder.write(shoulderAngle);
+  elbow.write(elbowAngle);
+  gripper.write(gripperAngle);
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
@@ -131,13 +157,62 @@ void loop() {
         rightMotion();
       } else if (command == "S") {
         stopMotion();
+      }
+      else if (command.startsWith("servo 1")) {
+        String direction = command.substring(6);
+        if (direction == "up") {
+          shoulderAngle += 5;
+          if (shoulderAngle >= 180){
+            shoulderAngle = 180;
+          }
+        } else if (direction == "down") {
+          shoulderAngle -= 5;
+          if (shoulderAngle <= 0){
+            shoulderAngle = 0;
+          }
+        }
+        shoulder.write(shoulderAngle);
+        Serial.print("shoulder angle: ");
+        Serial.println(shoulderAngle);
+      } else if (command.startsWith("servo 2")) {
+        String direction = command.substring(6);
+        if (direction == "up") {
+          elbowAngle += 5;
+          if (elbowAngle >= 180){
+            elbowAngle = 180;
+          }
+        } else if (direction == "down") {
+          elbowAngle -= 5;
+          if (elbowAngle <= 0){
+            elbowAngle = 0;
+          }
+        }
+        elbow.write(elbowAngle);
+        Serial.print("elbow angle: ");
+        Serial.println(elbowAngle);
+      } else if (command.startsWith("servo 3")) {
+        String direction = command.substring(6);
+        if (direction == "up") {
+          gripperAngle += 5;
+          if (gripperAngle >= 180){
+            gripperAngle = 180;
+          }
+        } else if (direction == "down") {
+          gripperAngle -= 5;
+          if (gripperAngle <= 0){
+            gripperAngle = 0;
+          }
+        }
+        gripper.write(gripperAngle);
+        Serial.print("Servo 3 angle: ");
+        Serial.println(gripperAngle);
       } else {
         Serial.println("Unknown command");
       }
     }
 
     Serial.println("Client disconnected");
-    stopMotion();  // Stop the robot when the client disconnects
+    stopMotion();
   }
 
   delay(10);  // Optional small delay
