@@ -11,12 +11,22 @@ cap = cv.VideoCapture(0)
 cap.set(3, 640)
 cap.set(4, 480)
 
-# Setup WebSocket connection
-try:
-    ws = websocket.WebSocket()
-    ws.connect("ws://192.168.151.7:80")  # Replace with your ESP32 IP and port
-except Exception as e:
-    print(f"Error connecting to WebSocket: {e}")
+
+# Function to connect to ESP32 WebSocket
+def connect_to_esp32():
+    try:
+        ws = websocket.WebSocket()
+        ws.connect("ws://192.168.151.7:80")  # Replace with your ESP32 IP address
+        print("Connected to ESP32")
+        return ws
+    except Exception as e:
+        print(f"Error connecting to WebSocket: {e}")
+        return None
+
+
+# Initialize WebSocket connection
+ws = connect_to_esp32()
+if not ws:
     exit()
 
 # Initialize Pygame
@@ -31,7 +41,8 @@ pygame.display.set_caption("Robot Controller")
 current_command = None
 selected_servo = 1  # Start with the first servo
 robot_location = (0, 0)  # Robot's current location (x, y)
-servo_angles = {"Servo 1": 90, "Servo 2": 90, "Servo 3": 90}  # Servo angles
+servo_angles = {"Servo 1": 90, "Servo 2": 0, "Servo 3": 180}  # Servo angles
+autonomous_mode = False  # Track whether the robot is in autonomous mode
 
 # Font for Pygame GUI
 font = pygame.font.SysFont("Arial", 24)
@@ -49,10 +60,27 @@ def send_motion_command(command):
     print(f"Motion command: {command}")
 
 
-# Function to send camera coordinates
-def send_camera_coordinates(x, y):
-    ws.send(json.dumps({"camera": {"x": x, "y": y}}))
-    print(f"Sent camera coordinates: ({x}, {y})")
+# Function to send target coordinates
+def send_target_coordinates(x, y, target_type):
+    ws.send(json.dumps({"target": {"x": x, "y": y, "type": target_type}}))
+    print(f"Sent {target_type} target coordinates: ({x}, {y})")
+    time.sleep(0.5)  # Add a delay to avoid overwhelming the ESP32
+
+
+# Function to break autonomous mode
+def break_autonomous_mode():
+    global autonomous_mode
+    ws.send(json.dumps({"command": "break_auto"}))
+    autonomous_mode = False
+    print("Breaking autonomous mode")
+
+
+# Function to switch to autonomous mode
+def switch_to_autonomous_mode():
+    global autonomous_mode
+    ws.send(json.dumps({"command": "autonomous_pickup"}))
+    autonomous_mode = True
+    print("Switching to autonomous mode")
 
 
 # Function to update robot location on the GUI
@@ -89,6 +117,20 @@ while True:
         myData = barcode.data.decode("utf-8")
         print(myData)
 
+        # Extract target coordinates from the QR code
+        try:
+            if "X=" in myData and "Y=" in myData:
+                x_target = float(myData.split("X=")[1].split("&")[0])
+                y_target = float(myData.split("Y=")[1])
+                send_target_coordinates(
+                    x_target, y_target, "pickup"
+                )  # Send pickup coordinates
+                autonomous_mode = True  # Switch to autonomous mode
+            else:
+                print("Invalid QR code format. Expected format: 'X= &Y= '")
+        except ValueError:
+            print("Invalid QR code data. Expected numeric values for X and Y.")
+
         # Extract barcode coordinates
         pts = np.array([barcode.polygon], np.int32)
         cv.polylines(frame, [pts], True, (255, 0, 0), 5)
@@ -103,9 +145,6 @@ while True:
             2,
         )
 
-        # Send barcode coordinates to ESP32
-        send_camera_coordinates(pts2[0], pts2[1])
-
     # Handle Pygame events
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -116,45 +155,40 @@ while True:
 
     # Check key states and send commands
     keys = pygame.key.get_pressed()
-    if keys[pygame.K_w]:
-        if current_command != "F":
+    if keys[pygame.K_e]:  # Break autonomous mode
+        break_autonomous_mode()
+    elif keys[pygame.K_m]:  # Switch to autonomous mode
+        switch_to_autonomous_mode()
+    elif not autonomous_mode:  # Only allow manual control if not in autonomous mode
+        if keys[pygame.K_w]:
             send_motion_command("F")
-            current_command = "F"
-    elif keys[pygame.K_s]:
-        if current_command != "B":
+        elif keys[pygame.K_s]:
             send_motion_command("B")
-            current_command = "B"
-    elif keys[pygame.K_a]:
-        if current_command != "L":
+        elif keys[pygame.K_a]:
             send_motion_command("L")
-            current_command = "L"
-    elif keys[pygame.K_d]:
-        if current_command != "R":
+        elif keys[pygame.K_d]:
             send_motion_command("R")
-            current_command = "R"
-    else:
-        if current_command is not None:  # If no keys are pressed, stop
+        else:
             send_motion_command("S")
-            current_command = None
 
-    # Servo selection
-    if keys[pygame.K_1]:
-        selected_servo = 1
-        print("Controlling Servo 1")
-    elif keys[pygame.K_2]:
-        selected_servo = 2
-        print("Controlling Servo 2")
-    elif keys[pygame.K_3]:
-        selected_servo = 3
-        print("Controlling Servo 3")
+        # Servo selection
+        if keys[pygame.K_1]:
+            selected_servo = 1
+            print("Controlling Servo 1")
+        elif keys[pygame.K_2]:
+            selected_servo = 2
+            print("Controlling Servo 2")
+        elif keys[pygame.K_3]:
+            selected_servo = 3
+            print("Controlling Servo 3")
 
-    # Servo angle adjustment
-    if keys[pygame.K_UP]:
-        send_servo_command(selected_servo, "up")
-        time.sleep(0.05)  # Small delay for smooth control
-    elif keys[pygame.K_DOWN]:
-        send_servo_command(selected_servo, "down")
-        time.sleep(0.05)
+        # Servo angle adjustment
+        if keys[pygame.K_UP]:
+            send_servo_command(selected_servo, "up")
+            time.sleep(0.05)  # Small delay for smooth control
+        elif keys[pygame.K_DOWN]:
+            send_servo_command(selected_servo, "down")
+            time.sleep(0.05)
 
     # Update GUI
     win.fill((0, 0, 0))  # Clear the screen
@@ -173,6 +207,8 @@ while True:
         "D: Right",
         "1/2/3: Select Servo",
         "Up/Down: Adjust Servo",
+        "E: Break Autonomous",
+        "M: Autonomous Mode",
         "Q: Quit",
     ]
     for i, text in enumerate(instructions):
@@ -189,11 +225,12 @@ while True:
         f"Servo 1 Angle: {servo_angles['Servo 1']}",
         f"Servo 2 Angle: {servo_angles['Servo 2']}",
         f"Servo 3 Angle: {servo_angles['Servo 3']}",
+        f"Autonomous Mode: {'ON' if autonomous_mode else 'OFF'}",
     ]
     for i, text in enumerate(states):
         state_text = font.render(text, True, (255, 255, 255))
         win.blit(
-            state_text, (width - 300, 10 + i * 30)
+            state_text, (width - 400, 10 + i * 30)
         )  # Position states on the top right
 
     pygame.display.update()
