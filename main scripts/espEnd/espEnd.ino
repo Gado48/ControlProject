@@ -2,8 +2,7 @@
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
-#include <PID_v1.h>
-#include <NewPing.h>
+#include <TinyMPU6050.h>
 
 using namespace websockets;
 
@@ -34,11 +33,6 @@ const int encoderB2 = 21;  // Encoder B channel 2 (Motor 2)
 volatile long counterA = 0;  // Encoder count for Motor 1
 volatile long counterB = 0;  // Encoder count for Motor 2
 
-// Ultrasonic sensor pins
-const int trigPin = 32;
-const int echoPin = 33;
-NewPing sonar(trigPin, echoPin, 200);  // Max distance 200 cm
-
 // Servo pins
 Servo shoulder;
 Servo elbow;
@@ -47,19 +41,24 @@ int shoulderAngle = 90; // Initial angle for Servo 1
 int elbowAngle = 90;    // Initial angle for Servo 2
 int gripperAngle = 90;  // Initial angle for Servo 3
 
-// PID variables
-double speedA, speedB; // Measured speeds
-double outputA, outputB; // PWM outputs
-double setpointA = 300; // Target speed for motor A (ticks per second)
-double setpointB = 300; // Target speed for motor B (ticks per second)
+// PID variables for Motor A
+double errorA = 0;
+double integralA = 0;
+double derivativeA = 0;
+double lastErrorA = 0;
+double outputA = 0;
+
+// PID variables for Motor B
+double errorB = 0;
+double integralB = 0;
+double derivativeB = 0;
+double lastErrorB = 0;
+double outputB = 0;
 
 // PID constants (set directly in the code)
-double kp = 2.0;  // Proportional gain
-double ki = 1.0;  // Integral gain
-double kd = 0.5;  // Derivative gain
-
-PID pidA(&speedA, &outputA, &setpointA, kp, ki, kd, DIRECT); // Initialize PID with default values
-PID pidB(&speedB, &outputB, &setpointB, kp, ki, kd, DIRECT); // Initialize PID with default values
+double kp = 1.0;  // Proportional gain
+double ki = 0.0;  // Integral gain
+double kd = 0.0;  // Derivative gain
 
 // Target coordinates
 float x_target_pickup = 0;
@@ -68,6 +67,20 @@ float x_target_dropoff = 0;
 float y_target_dropoff = 0;
 float x_current = 0; // Current robot position (x)
 float y_current = 0; // Current robot position (y)
+float robot_heading = 0; // Robot's heading in radians
+
+// Odometry constants
+const float wheel_radius = 3.25; // Wheel radius in cm
+const float wheel_circumference = 2 * 3.14159 * wheel_radius; // Wheel circumference
+const float ticks_per_revolution = 1000; // 1000 ticks per revolution
+const float wheel_base = 19.0; // Distance between wheels in cm
+
+// MPU6050 object
+MPU6050 mpu;
+
+// Sensor fusion variables
+float gyro_yaw = 0; // Yaw angle from gyroscope
+unsigned long last_time = 0; // Last time for gyroscope integration
 
 // Robot state
 enum RobotState {
@@ -145,16 +158,109 @@ void stopMotion() {
     digitalWrite(in4, LOW);
 }
 
+// Function to compute PID output for Motor A
+void computePIDA(double setpointA, double speedA) {
+    errorA = setpointA - speedA; // Calculate error
+    integralA += errorA; // Accumulate integral
+    derivativeA = errorA - lastErrorA; // Calculate derivative
+
+    // Compute PID output
+    outputA = (kp * errorA) + (ki * integralA) + (kd * derivativeA);
+
+    // Constrain output to PWM range (0-255)
+    outputA = constrain(outputA, 0, 255);
+
+    // Save current error for next iteration
+    lastErrorA = errorA;
+}
+
+// Function to compute PID output for Motor B
+void computePIDB(double setpointB, double speedB) {
+    errorB = setpointB - speedB; // Calculate error
+    integralB += errorB; // Accumulate integral
+    derivativeB = errorB - lastErrorB; // Calculate derivative
+
+    // Compute PID output
+    outputB = (kp * errorB) + (ki * integralB) + (kd * derivativeB);
+
+    // Constrain output to PWM range (0-255)
+    outputB = constrain(outputB, 0, 255);
+
+    // Save current error for next iteration
+    lastErrorB = errorB;
+}
+
 // Function to move the arm to the target coordinates
 void move_arm_to_target() {
-    shoulderAngle = 90;  // Example angle
-    elbowAngle = 0;     // Example angle
-    gripperAngle = 180;    // Open gripper
+    shoulderAngle = 120;  
+    elbowAngle = 150;     
+    gripperAngle = 66;
 
     // Move the arm
     shoulder.write(shoulderAngle);
     elbow.write(elbowAngle);
     gripper.write(gripperAngle);
+}
+
+void lift_arm(){
+    shoulderAngle = 90;  
+    elbowAngle = 180;     
+    gripperAngle = 66;    
+
+    // Move the arm
+    shoulder.write(shoulderAngle);
+    elbow.write(elbowAngle);
+    gripper.write(gripperAngle);
+}
+
+// Function to update robot position using odometry
+void update_position() {
+    static unsigned long last_update_time = 0;
+    unsigned long current_time = millis();
+    float delta_time = (current_time - last_update_time) / 1000.0; // Convert to seconds
+
+    // Calculate distance traveled by each wheel
+    float distanceA = (counterA / ticks_per_revolution) * wheel_circumference;
+    float distanceB = (counterB / ticks_per_revolution) * wheel_circumference;
+
+    // Calculate linear and angular displacement
+    float linear_displacement = (distanceA + distanceB) / 2.0;
+    float angular_displacement = (distanceB - distanceA) / wheel_base;
+
+    // Update robot position
+    x_current += linear_displacement * cos(robot_heading);
+    y_current += linear_displacement * sin(robot_heading);
+    
+    // Update robot heading using MPU6050 gyroscope
+    mpu.Execute(); // Update MPU6050 data
+    float gyro_z = mpu.GetGyroZ(); // Get angular velocity around the Z-axis (yaw)
+    gyro_yaw += gyro_z * delta_time; // Integrate angular velocity to get yaw angle
+    
+    // Fuse encoder and gyroscope data for heading
+    robot_heading = gyro_yaw; // Use gyroscope for heading
+    
+    // Reset encoder counts
+    counterA = 0;
+    counterB = 0;
+
+    // Update last update time
+    last_update_time = current_time;
+
+    // Send updated position to the GUI
+    send_robot_position();
+}
+
+// Function to send robot position to the GUI
+void send_robot_position() {
+    StaticJsonDocument<200> doc;
+    doc["type"] = "position";
+    doc["x"] = x_current;
+    doc["y"] = y_current;
+    doc["heading"] = robot_heading;
+
+    String json;
+    serializeJson(doc, json);
+    server.broadcast(json);
 }
 
 // Function to move the robot towards the target coordinates
@@ -167,15 +273,15 @@ void move_to_target() {
         setpointA = x_diff;
         setpointB = y_diff;
 
-        pidA.Compute();
-        pidB.Compute();
+        computePIDA(setpointA, speedA);
+        computePIDB(setpointB, speedB);
         setMotorSpeeds();
 
-        // Check distance to the box
-        float distance = sonar.ping_cm();
-        if (distance < 10) {
+        // Check if reached pickup position
+        if (abs(x_diff) < 5 && abs(y_diff) < 5) {
             stopMotion();
             move_arm_to_target();  // Pick up the box
+            lift_arm();
             robotState = AUTONOMOUS_DROPOFF;  // Switch to drop-off state
         }
     } else if (robotState == AUTONOMOUS_DROPOFF) {
@@ -186,16 +292,16 @@ void move_to_target() {
         setpointA = x_diff;
         setpointB = y_diff;
 
-        pidA.Compute();
-        pidB.Compute();
+        computePIDA(setpointA, speedA);
+        computePIDB(setpointB, speedB);
         setMotorSpeeds();
 
         // Check if reached drop-off position
         if (abs(x_diff) < 5 && abs(y_diff) < 5) {
             stopMotion();
             // Drop the box (move arm to drop position)
-            shoulderAngle = 90;
-            elbowAngle = 0;
+            shoulderAngle = 120;
+            elbowAngle = 150;
             gripperAngle = 180;
             shoulder.write(shoulderAngle);
             elbow.write(elbowAngle);
@@ -240,9 +346,9 @@ void setup() {
     elbow.write(elbowAngle);
     gripper.write(gripperAngle);
 
-    // Initialize ultrasonic sensor
-    pinMode(trigPin, OUTPUT);
-    pinMode(echoPin, INPUT);
+    // Initialize MPU6050
+    mpu.Initialize();
+    mpu.Calibrate(); // Calibrate the MPU6050
 
     // Connect to Wi-Fi
     WiFi.begin(ssid, password);
@@ -259,12 +365,6 @@ void setup() {
     // Start the WebSocket server
     server.listen(80);  // Port 80
     Serial.println("WebSocket server started on port 80");
-
-    // Initialize PID controllers
-    pidA.SetMode(AUTOMATIC);
-    pidB.SetMode(AUTOMATIC);
-    pidA.SetOutputLimits(0, 255);
-    pidB.SetOutputLimits(0, 255);
 }
 
 void loop() {
@@ -279,11 +379,14 @@ void loop() {
         prevMillis = currentMillis;
 
         // Compute PID outputs
-        pidA.Compute();
-        pidB.Compute();
+        computePIDA(setpointA, speedA);
+        computePIDB(setpointB, speedB);
 
         // Set motor speeds
         setMotorSpeeds();
+
+        // Update robot position using odometry
+        update_position();
     }
 
     // Check for new WebSocket messages
@@ -388,5 +491,5 @@ void loop() {
         move_to_target();
     }
 
-    delay(10);  // Optional small delay
 }
+

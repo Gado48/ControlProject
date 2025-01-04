@@ -8,8 +8,8 @@ import time
 
 # Initialize video capture
 cap = cv.VideoCapture(0)
-cap.set(3, 640)
-cap.set(4, 480)
+cap.set(3, 640)  # Set frame width
+cap.set(4, 480)  # Set frame height
 
 
 # Function to connect to ESP32 WebSocket
@@ -29,7 +29,7 @@ ws = connect_to_esp32()
 if not ws:
     exit()
 
-# Initialize Pygame
+# Initialize Pygame for GUI
 pygame.init()
 
 # Set up display
@@ -41,6 +41,7 @@ pygame.display.set_caption("Robot Controller")
 current_command = None
 selected_servo = 1  # Start with the first servo
 robot_location = (0, 0)  # Robot's current location (x, y)
+robot_heading = 0  # Robot's heading in degrees
 servo_angles = {"Servo 1": 90, "Servo 2": 0, "Servo 3": 180}  # Servo angles
 autonomous_mode = False  # Track whether the robot is in autonomous mode
 
@@ -84,15 +85,10 @@ def switch_to_autonomous_mode():
 
 
 # Function to update robot location on the GUI
-def update_robot_location(x, y):
-    global robot_location
+def update_robot_location(x, y, heading):
+    global robot_location, robot_heading
     robot_location = (x, y)
-
-
-# Function to update servo angles
-def update_servo_angles(servo, angle):
-    global servo_angles
-    servo_angles[servo] = angle
+    robot_heading = heading
 
 
 # Function to convert OpenCV frame to Pygame surface and resize it to fit the window
@@ -102,6 +98,20 @@ def cv2_to_pygame(frame, target_size):
     frame = np.rot90(frame)  # Rotate 90 degrees
     frame = pygame.surfarray.make_surface(frame)
     return frame
+
+
+# Function to handle WebSocket messages
+def handle_websocket_message(message):
+    try:
+        data = json.loads(message)
+        if data["type"] == "position":
+            x = data["x"]
+            y = data["y"]
+            heading = data["heading"]
+            update_robot_location(x, y, heading)
+            print(f"Robot Position: ({x}, {y}), Heading: {heading}")
+    except Exception as e:
+        print(f"Error processing WebSocket message: {e}")
 
 
 # Main loop
@@ -125,13 +135,12 @@ while True:
                 send_target_coordinates(
                     x_target, y_target, "pickup"
                 )  # Send pickup coordinates
-                autonomous_mode = True  # Switch to autonomous mode
             else:
                 print("Invalid QR code format. Expected format: 'X= &Y= '")
         except ValueError:
             print("Invalid QR code data. Expected numeric values for X and Y.")
 
-        # Extract barcode coordinates
+        # Draw barcode boundaries and text on the frame
         pts = np.array([barcode.polygon], np.int32)
         cv.polylines(frame, [pts], True, (255, 0, 0), 5)
         pts2 = barcode.rect
@@ -145,13 +154,21 @@ while True:
             2,
         )
 
-    # Handle Pygame events
+    # Handle Pygame events (e.g., window resizing, key presses)
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             run = False
         elif event.type == pygame.VIDEORESIZE:  # Handle window resizing
             width, height = event.size
             win = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+
+    # Check for WebSocket messages
+    try:
+        message = ws.recv()
+        if message:
+            handle_websocket_message(message)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
 
     # Check key states and send commands
     keys = pygame.key.get_pressed()
@@ -221,7 +238,8 @@ while True:
     states = [
         f"Current Command: {current_command}",
         f"Selected Servo: {selected_servo}",
-        f"Robot Location: ({robot_location[0]}, {robot_location[1]})",
+        f"Robot Location: ({robot_location[0]:.2f}, {robot_location[1]:.2f})",
+        f"Robot Heading: {robot_heading:.2f}°",
         f"Servo 1 Angle: {servo_angles['Servo 1']}",
         f"Servo 2 Angle: {servo_angles['Servo 2']}",
         f"Servo 3 Angle: {servo_angles['Servo 3']}",
